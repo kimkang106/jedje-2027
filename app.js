@@ -89,6 +89,7 @@ function render() {
   if (!me.who) { v.innerHTML = `<div class="notice">위에서 위원 이름을 고르고, 단톡방으로 안내받은 확인 코드를 넣은 뒤 <b>시작</b>을 눌러 주세요.</div>` + guideHTML(); return; }
   if (cur && view === 'mine') { v.innerHTML = ''; v.append(detail(cur)); return; }
   if (view === 'mine') v.innerHTML = listHTML();
+  else if (view === 'dl') { v.innerHTML = dlHTML(); bindDl(); return; }
   else if (view === 'adv') v.innerHTML = advHTML();
   else if (view === 'all') v.innerHTML = allHTML();
   else v.innerHTML = guideHTML();
@@ -245,6 +246,95 @@ function allHTML() {
   h += `<tr class="gh"><td>합계</td><td></td><td class="n">${T.s}</td><td class="n">${T.f}/${T.s}</td><td class="n">${T.d}/${T.n}</td><td class="n">${T.fb}</td><td class="n">${T.ar}(${T.aa})</td></tr></table></div>`;
   return h;
 }
+// ---------- 편제표 내려받기 ----------
+let dlSel = new Set(), dlF = {kind: '', sg: '', mine: false, q: ''};
+const kindGroup = k => /특성화|마이스터|고등기술|대안형/.test(k) ? '직업계고' : k === '종합고' ? '종합고' : /특목/.test(k) ? '특목고' : (k === '자공고' || k === '자사고') ? k : '일반고';
+const short = n => n.replace('고등학교', '고').replace('고등기술학교', '고등기술');
+function dlList() {
+  return DATA.schools.filter(s => (!dlF.kind || kindGroup(s.kind) === dlF.kind) && (!dlF.sg || s.sg === dlF.sg) && (!dlF.mine || s.m === me.who) && (!dlF.q || s.name.includes(dlF.q)))
+    .slice().sort((a, b) => a.sg.localeCompare(b.sg) || a.name.localeCompare(b.name));
+}
+function dlHTML() {
+  const sgs = [...new Set(DATA.schools.map(s => s.sg))].sort();
+  const kinds = ['일반고', '자공고', '자사고', '특목고', '종합고', '직업계고'];
+  const L = dlList();
+  return `<h2>편제표 내려받기</h2><p class="muted" style="margin:4px 0 12px">학교를 골라 한꺼번에 내려받습니다. 일반고 등은 입력 시스템 저장본을 엑셀·PDF로 바꾼 파일, 직업계고는 학교가 제출한 엑셀 원본(PDF 변환본 포함)입니다. 여러 학교를 고르면 압축(zip) 파일 하나로 받습니다.</p>
+  <div class="filters"><select id="fk"><option value="">계열 전체</option>${kinds.map(k => `<option ${dlF.kind === k ? 'selected' : ''}>${k}</option>`).join('')}</select>
+  <select id="fs"><option value="">시군 전체</option>${sgs.map(k => `<option ${dlF.sg === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select>
+  <input type="text" id="fq" placeholder="학교명 검색" value="${esc(dlF.q)}">
+  ${isAdmin() ? '' : `<label class="chk"><input type="checkbox" id="fmine" ${dlF.mine ? 'checked' : ''}> 내 담당만</label>`}</div>
+  <div class="flex" style="margin-bottom:8px"><button class="btn sm" id="selall">보이는 학교 모두 선택</button><button class="btn sm" id="selnone">선택 해제</button><span class="tiny">${L.length}교 표시</span></div>
+  <div class="card">${L.map(s => {
+    const has = (s.plan ? 1 : 0) + s.files.length;
+    const what = s.plan ? `입력 시스템 편제표${s.entries.length > 1 ? ` (${s.entries.filter(e => e.form === '양식1').length}개 과정)` : ''}` : s.files.length ? `제출 엑셀 ${s.files.length}개` : '';
+    const extra = s.plan && s.files.length ? ` + 제출 엑셀 ${s.files.length}개` : '';
+    return `<div class="dlrow"><input type="checkbox" id="d_${s.code}" data-dl="${s.code}" ${dlSel.has(s.code) ? 'checked' : ''} ${has ? '' : 'disabled'}>
+     <label for="d_${s.code}"><b>${esc(s.name)}</b> <span class="tiny">${esc(s.sg)} · ${esc(s.kind)} · 담당 ${esc(s.m)}</span><br><span class="tiny">${has ? esc(what + extra) : '편제표 없음(' + esc(s.st) + ')'}</span></label>
+     <span class="flex">${s.plan ? `<a class="btn sm" href="${esc(s.plan.x)}" download="${esc(short(s.name))}_편제표.xlsx">엑셀</a><a class="btn sm" href="${esc(s.plan.p)}" target="_blank" rel="noopener">PDF</a>` : ''}
+     ${s.files.map(f => `<a class="btn sm" href="${esc(f.f)}" download="${esc(f.name)}">원본</a>`).join('')}</span></div>`;
+  }).join('')}</div>
+  <div class="dlbar"><div><b id="dlc">${dlSel.size}교 선택</b><div class="chk" style="margin-top:4px"><label><input type="checkbox" id="ox" checked> 엑셀</label><label><input type="checkbox" id="op"> PDF</label></div></div>
+   <div class="flex"><button class="btn" id="merge" title="일반고 등 입력 시스템 편제표만 합칩니다">엑셀 한 파일로 합치기</button><button class="btn pri" id="dlgo">선택한 학교 zip으로 받기</button></div>
+   <div class="tiny" id="dlmsg" style="flex-basis:100%"></div></div>`;
+}
+function bindDl() {
+  const re = () => { $('#view').innerHTML = dlHTML(); bindDl(); };
+  $('#fk').onchange = e => { dlF.kind = e.target.value; re(); };
+  $('#fs').onchange = e => { dlF.sg = e.target.value; re(); };
+  $('#fq').onchange = e => { dlF.q = e.target.value.trim(); re(); };
+  const fm = $('#fmine'); if (fm) fm.onchange = e => { dlF.mine = e.target.checked; re(); };
+  document.querySelectorAll('[data-dl]').forEach(c => c.onchange = () => { c.checked ? dlSel.add(c.dataset.dl) : dlSel.delete(c.dataset.dl); $('#dlc').textContent = dlSel.size + '교 선택'; });
+  $('#selall').onclick = () => { dlList().forEach(s => { if (s.plan || s.files.length) dlSel.add(s.code); }); re(); };
+  $('#selnone').onclick = () => { dlSel.clear(); re(); };
+  $('#dlgo').onclick = dlZip; $('#merge').onclick = dlMerge;
+}
+function saveBlob(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+async function dlZip() {
+  const msg = $('#dlmsg'), ox = $('#ox').checked, op = $('#op').checked;
+  if (!dlSel.size) { msg.textContent = '학교를 먼저 선택해 주세요.'; return; }
+  if (!ox && !op) { msg.textContent = '엑셀·PDF 중 하나 이상 골라 주세요.'; return; }
+  if (!window.JSZip) { msg.textContent = '압축 도구를 불러오지 못했습니다. 새로 고침 후 다시 시도해 주세요.'; return; }
+  const zip = new JSZip(); const ss = DATA.schools.filter(s => dlSel.has(s.code));
+  const jobs = [];
+  ss.forEach(s => {
+    const base = `[${s.sg}] ${short(s.name)}`;
+    if (s.plan) { if (ox) jobs.push([s.plan.x, `${base}_편제표.xlsx`]); if (op) jobs.push([s.plan.p, `${base}_편제표.pdf`]); }
+    s.files.forEach((f, i) => { const nm = f.name.replace(/\.xlsx$/, ''); if (ox) jobs.push([f.f, `${nm}(제출 원본).xlsx`]); if (op && f.pdf) jobs.push([f.pdf, `${nm}(제출 원본).pdf`]); });
+  });
+  let done = 0; const btn = $('#dlgo'); btn.disabled = true;
+  try {
+    for (let i = 0; i < jobs.length; i += 6) {
+      await Promise.all(jobs.slice(i, i + 6).map(async ([u, n]) => { const r = await fetch(u); if (r.ok) zip.file(n, await r.arrayBuffer()); done++; msg.textContent = `파일 모으는 중 ${done}/${jobs.length}`; }));
+    }
+    msg.textContent = '압축하는 중…';
+    const blob = await zip.generateAsync({type: 'blob'});
+    saveBlob(blob, `2027 신입생 편제표_${ss.length}교.zip`);
+    msg.textContent = `${ss.length}교 · 파일 ${jobs.length}개를 받았습니다.` + (op && ss.some(s => s.files.some(f => !f.pdf)) ? ' (일부 직업계고 원본은 PDF 변환이 안 되어 엑셀만 들어 있습니다)' : '');
+  } catch (e) { msg.textContent = '내려받기 중 오류가 났습니다. 학교 수를 줄여 다시 시도해 주세요.'; }
+  btn.disabled = false;
+}
+async function dlMerge() {
+  const msg = $('#dlmsg');
+  const ss = DATA.schools.filter(s => dlSel.has(s.code) && s.plan);
+  if (!ss.length) { msg.textContent = '입력 시스템 편제표가 있는 학교(일반고 등)를 선택해 주세요. 직업계고 원본은 양식이 달라 합치지 않습니다.'; return; }
+  if (!window.XLSX) { msg.textContent = '엑셀 도구를 불러오지 못했습니다.'; return; }
+  const out = XLSX.utils.book_new(); const used = new Set(); let n = 0;
+  for (const s of ss) {
+    const wb = XLSX.read(await (await fetch(s.plan.x)).arrayBuffer(), {type: 'array'});
+    wb.SheetNames.forEach(sn => {
+      let nm = (short(s.name) + (wb.SheetNames.length > 1 || sn !== '편제표' ? '_' + sn : '')).replace(/[\\/*?:\[\]]/g, '').slice(0, 31);
+      let k = nm, i = 2; while (used.has(k)) k = nm.slice(0, 28) + '_' + i++; used.add(k);
+      XLSX.utils.book_append_sheet(out, wb.Sheets[sn], k);
+    });
+    msg.textContent = `합치는 중 ${++n}/${ss.length}`;
+  }
+  XLSX.writeFile(out, `2027 신입생 편제표 모음_${ss.length}교.xlsx`);
+  msg.textContent = `${ss.length}교를 시트별로 한 파일에 담았습니다(서식은 단순화됨).` + (DATA.schools.some(s => dlSel.has(s.code) && !s.plan) ? ' 직업계고 원본은 제외했습니다.' : '');
+}
+
 function guideHTML() {
   return `<section class="card sec" style="margin-top:12px"><h2>점검 안내</h2><ol class="guide">
   <li><b>위원 이름과 확인 코드</b>를 넣고 시작합니다. 같은 기기에서는 다음부터 자동으로 기억합니다.</li>
@@ -252,6 +342,7 @@ function guideHTML() {
   <li>편제표는 <b>입력 시스템 편제표 보기</b>(일반고 등) 또는 <b>엑셀 화면에서 보기·내려받기</b>(직업계고)로 확인합니다.</li>
   <li>1차 자동 점검의 <span class="pill p-no">부적합</span> <span class="pill p-ck">확인 필요</span> 항목마다 <b>위원 판정</b>(적합 / 부적합 / 오검출)과 의견을 남깁니다. 학교에 알려야 하면 <b>학교 환류 필요</b>를 체크합니다.</li>
   <li><b>직업계고</b>는 총 학점·체육·창체처럼 숫자로 정해지는 항목은 자동 점검 결과를 확인만 하면 됩니다. 전문교과 분류, 학기 단위·연속 학기, 실무 과목 능력단위, 고시 외 과목처럼 판단이 필요한 항목은 <b>자문 요청</b>을 체크하면 박준형 위원이 그 항목만 보고 답합니다.</li>
+  <li><b>편제표 내려받기</b> 탭에서 여러 학교를 골라 엑셀·PDF를 zip 하나로 받거나, 일반고 편제표를 엑셀 한 파일(학교별 시트)로 합쳐 비교할 수 있습니다.</li>
   <li>학교를 다 봤으면 <b>학교 종합 의견</b>을 적고 <b>검토를 마쳤습니다</b>를 체크합니다.</li>
   <li>입력은 바로 저장됩니다. 인터넷이 끊기면 브라우저에 보관했다가 다시 연결될 때 보냅니다. 걱정되면 <b>내 의견 엑셀로 내려받기</b>로 백업해 두세요.</li></ol>
   <p class="tiny">일정: 2차 점검 ~11. 8.(일) · 결과 환류 11. 10.(화)~11. 20.(금) · 문의 고교교육과정지원센터 김시형 장학사 041-640-7211, 010-5680-0710</p></section>`;
